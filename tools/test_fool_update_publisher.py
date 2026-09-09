@@ -109,6 +109,13 @@ class PublisherTests(unittest.TestCase):
         )
         self.assertEqual(verified.returncode, 0, verified.stderr)
 
+    def test_unchanged_staged_output_is_not_republished(self):
+        (self.server / "mods" / "graphics.jar.disabled").write_bytes(b"graphics")
+        first = PUBLISHER.publish(self.config, check_only=False, force=True)
+        second = PUBLISHER.publish(self.config, check_only=False, force=False)
+        self.assertTrue(first["changed"])
+        self.assertFalse(second["changed"])
+
     def test_duplicate_enabled_and_disabled_sources_are_rejected(self):
         (self.server / "mods" / "same.jar").write_bytes(b"enabled")
         (self.server / "mods" / "same.jar.disabled").write_bytes(b"disabled")

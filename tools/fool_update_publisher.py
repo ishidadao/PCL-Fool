@@ -283,7 +283,11 @@ def publish(config: dict[str, Any], check_only: bool, force: bool) -> dict[str, 
     validate_config(config)
     repository = Path(config["repositoryRoot"])
     output_root = Path(config["outputRoot"])
-    old_payload_path = repository / "manifest.payload.json"
+    # A staged output may intentionally differ from the live repository during
+    # key rotation.  Once a staged payload exists, use it as the next baseline
+    # so the fallback timer does not republish the same candidate forever.
+    staged_payload_path = output_root / "manifest.payload.json"
+    old_payload_path = staged_payload_path if staged_payload_path.is_file() else repository / "manifest.payload.json"
     if not old_payload_path.is_file():
         raise PublishError(f"seed manifest is missing: {old_payload_path}")
     old_payload = json.loads(old_payload_path.read_text(encoding="utf-8"))
