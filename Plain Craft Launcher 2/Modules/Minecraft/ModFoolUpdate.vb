@@ -6,7 +6,12 @@ Public Module ModFoolUpdate
     Private Const FoolMarkerName As String = ".fool-managed.json"
     Private Const ManagedDiscoveryPort As Integer = 4443
     Private Const ManagedDiscoveryPath As String = "/.well-known/pcl-managed.json"
-    Private Const FoolPublicKeyXml As String = "<RSAKeyValue><Modulus>xnnmUgsZw7Bs1OF9+UULn45GRqEzYybC9TT/ozlGSaxlvIUhxBENLM39FmPcEmGA69Ex9xEt9ENDCdZ1doL+Ao0vMXuVAq99aHEww4OzdNrdWsHnnUT/MJCqXS5HuobT4ZN42z1iOddDBM/I9okQUdbVAxBbk15l1vIw/TryAy6HGSaYGE741EvoOr5RQtzufyWlg5UwuylamjOqUDVuNurrN4kNUWGqUchIEsvqA7u2ArzJ23b7yyCz1CQ80LIA+JpHq0/TgXmPDT1maYjCiIqV9nPOB9sT2lM5Q1Z88JvNxJqdvDbyvDT6nhwaNEdfc3A/ke5/uZTgLSCPNtSSCWGA8Hq6mo4sIaOn5G3gqvXbgV27recuaFUmWN6Q5QjbwwIMrIGYZUUwKyJtuvU03Y0WpjarCT1lIEqw8uT6OqstyOu39PFDqWm81Ugpuj9JStAvnaPulM3lxPqc/8KsL0nLLitZUs+jo8SYJGUmyrsNLkDUdfggTzci34UwAJmD</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>"
+    ' Keep the retired key during the transition so a new launcher can still verify
+    ' discovery documents produced before the server-side signing key was rotated.
+    Private ReadOnly FoolTrustedPublicKeysXml As String() = {
+        "<RSAKeyValue><Modulus>xnnmUgsZw7Bs1OF9+UULn45GRqEzYybC9TT/ozlGSaxlvIUhxBENLM39FmPcEmGA69Ex9xEt9ENDCdZ1doL+Ao0vMXuVAq99aHEww4OzdNrdWsHnnUT/MJCqXS5HuobT4ZN42z1iOddDBM/I9okQUdbVAxBbk15l1vIw/TryAy6HGSaYGE741EvoOr5RQtzufyWlg5UwuylamjOqUDVuNurrN4kNUWGqUchIEsvqA7u2ArzJ23b7yyCz1CQ80LIA+JpHq0/TgXmPDT1maYjCiIqV9nPOB9sT2lM5Q1Z88JvNxJqdvDbyvDT6nhwaNEdfc3A/ke5/uZTgLSCPNtSSCWGA8Hq6mo4sIaOn5G3gqvXbgV27recuaFUmWN6Q5QjbwwIMrIGYZUUwKyJtuvU03Y0WpjarCT1lIEqw8uT6OqstyOu39PFDqWm81Ugpuj9JStAvnaPulM3lxPqc/8KsL0nLLitZUs+jo8SYJGUmyrsNLkDUdfggTzci34UwAJmD</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>",
+        "<RSAKeyValue><Modulus>rtthlrMQPmTy/1vmqWsxQuDWWJWyph55l8cwCpvrlQYaoLJ2rCCdmbVXIhXE+CE9mex8lEJZs1ZQEhGFWj9D5yzUSS8f7CqmTqu5gfJv5/0AL7hW6yS4yj2cSiS/+THBSSwSrMoRZG7S4k5DzVoJLIwOvhLOJaN1jtC6D5LrdeaUyoTANwwl4qo6e4r4V2HzcLpp29+6R/knL0fmRsfzaMRfQGmyqvgjVQXjss18F8ti9oiW62xgA9PoKYpbUazFS7FAOguy5tY7Z9r3BMj7AoVLLrEZVmPRy/X7gLFLkzRGL6p4rsizYg81qdJbY0Man18XXJOnX6SCpPJ5unmM7jKV6b6HhSYd7LIpE68HEDlARYTVVY/45hI+9zJ7d2fDIctYC32l5paxrSf86fiUsNsqTg5kBm0zQlVN751AS8GlUXRDzfcz/bXf1rj/GsmsoUV12eyCK+RA8QmU3lyIKmFTfrWDxO/FBnCTthzTgSjXo8ZvAOff8IJZwMmlGm7r</Modulus><Exponent>AQAB</Exponent></RSAKeyValue>"
+    }
     Private ReadOnly FoolAllowedRoots As String() = {"mods", "config", "defaultconfigs", "kubejs", "emotes", "resourcepacks", "shaderpacks"}
 
     Private Class FoolManagedFile
@@ -217,13 +222,22 @@ Public Module ModFoolUpdate
         If Envelope.Value(Of Integer?)("schema") <> 1 Then Throw New FormatException("不支持的签名信封版本")
         PayloadBytes = Convert.FromBase64String(Envelope.Value(Of String)("payload"))
         Dim SignatureBytes = Convert.FromBase64String(Envelope.Value(Of String)("signature"))
-        Using Rsa As New RSACryptoServiceProvider()
-            Rsa.PersistKeyInCsp = False
-            Rsa.FromXmlString(FoolPublicKeyXml)
-            If Not Rsa.VerifyData(PayloadBytes, CryptoConfig.MapNameToOID("SHA256"), SignatureBytes) Then
-                Throw New CryptographicException("数字签名不正确")
-            End If
-        End Using
+        Dim SignatureValid = False
+        For Each PublicKeyXml In FoolTrustedPublicKeysXml
+            Try
+                Using Rsa As New RSACryptoServiceProvider()
+                    Rsa.PersistKeyInCsp = False
+                    Rsa.FromXmlString(PublicKeyXml)
+                    If Rsa.VerifyData(PayloadBytes, CryptoConfig.MapNameToOID("SHA256"), SignatureBytes) Then
+                        SignatureValid = True
+                        Exit For
+                    End If
+                End Using
+            Catch ex As CryptographicException
+                Logger.Warn(ex, "[愚者更新] 一个受信任签名密钥无法验证当前文档")
+            End Try
+        Next
+        If Not SignatureValid Then Throw New CryptographicException("数字签名不正确")
         Return JObject.Parse(Encoding.UTF8.GetString(PayloadBytes))
     End Function
 

@@ -3,14 +3,25 @@ on:
   push:
     paths:
       - 'Plain Craft Launcher 2/**'
+      - 'tools/**'
       - '.github/workflows/**'
   pull_request:
     paths:
       - 'Plain Craft Launcher 2/**'
+      - 'tools/**'
       - '.github/workflows/**'
   workflow_dispatch:
 
 jobs:
+  publisher-test:
+    name: Publisher tests
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v6
+    - name: Test signed manifest publisher
+      run: python3 tools/test_fool_update_publisher.py -v
+
   build:
     name: Build
     runs-on: windows-latest
